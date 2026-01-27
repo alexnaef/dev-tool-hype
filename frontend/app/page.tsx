@@ -1,4 +1,5 @@
 import { HypeBarometer } from "@/components/hype-barometer";
+import { AboutPopover } from "@/components/about-popover";
 import { promises as fs } from "fs";
 import path from "path";
 
@@ -51,9 +52,13 @@ export default async function Home() {
   return (
     <main className="min-h-screen py-16 px-4">
       <div className="max-w-2xl mx-auto">
-        <h1 className="text-4xl font-bold text-foreground mb-10 text-center">
-          Hype Barometer
-        </h1>
+        <div className="mb-10 flex items-start gap-4">
+          <AboutPopover />
+          <h1 className="text-4xl font-bold text-foreground text-center flex-1">
+            Hype Barometer
+          </h1>
+          <div className="w-8" /> {/* balance the about button */}
+        </div>
 
         {tools.length === 0 ? (
           <p className="text-center text-muted-foreground">
