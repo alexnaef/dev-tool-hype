@@ -72,7 +72,8 @@ def main():
 
     # --- Step 4: Fetch HN + cross-source discovery ---
     print("\nFetching Hacker News mentions...")
-    hn_data = fetch_all_hn_metrics(days=7)
+    repo_names_for_hn = list(repos.keys())
+    hn_data = fetch_all_hn_metrics(days=7, repo_names=repo_names_for_hn)
 
     for full_name_lower, hn_info in hn_data.items():
         # Cross-source: add newly discovered repos
