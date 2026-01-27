@@ -1,6 +1,6 @@
 """
 Discover AI tools from Hacker News discussions.
-Extracts GitHub URLs directly from posts rather than fuzzy matching.
+Extracts GitHub URLs from posts and comments rather than fuzzy matching.
 """
 import re
 import requests
@@ -109,8 +109,107 @@ def extract_github_repos_from_posts(posts: list[dict]) -> dict:
     return repo_mentions
 
 
+def fetch_ai_related_comments(days: int = 7) -> list[dict]:
+    """Fetch HN comments related to AI/ML/LLM topics."""
+    queries = [
+        "LLM",
+        "AI tool",
+        "GPT",
+        "Claude",
+        "local model",
+        "RAG",
+        "AI agent",
+        "coding assistant",
+        "Ollama",
+        "open source AI",
+    ]
+    all_comments = []
+    seen_ids = set()
+
+    for query in queries:
+        print(f"Searching HN comments: '{query}'")
+        timestamp = int((datetime.utcnow() - timedelta(days=days)).timestamp())
+        url = f"{HN_ALGOLIA_API}/search"
+        params = {
+            "query": query,
+            "tags": "comment",
+            "numericFilters": f"created_at_i>{timestamp}",
+            "hitsPerPage": 200,
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            hits = resp.json().get("hits", [])
+            for hit in hits:
+                cid = hit.get("objectID")
+                if cid and cid not in seen_ids:
+                    seen_ids.add(cid)
+                    all_comments.append(hit)
+        except requests.RequestException as e:
+            print(f"Error searching HN comments for '{query}': {e}")
+
+    return all_comments
+
+
+def extract_github_repos_from_comments(comments: list[dict]) -> dict:
+    """
+    Extract GitHub repo references from HN comment text.
+    Returns {full_name: {mention_count, total_points, total_comments, posts}}.
+    """
+    repo_mentions: dict[str, dict] = {}
+
+    for comment in comments:
+        comment_text = comment.get("comment_text", "")
+        if not comment_text:
+            continue
+
+        # Find all GitHub URLs in comment text
+        urls = re.findall(r"https?://github\.com/[\w.\-]+/[\w.\-]+", comment_text)
+        points = comment.get("points", 0) or 0
+        story_id = comment.get("story_id")
+
+        repos_in_comment = set()
+        for url in urls:
+            repo = parse_github_url(url)
+            if repo:
+                repos_in_comment.add(repo.lower())
+
+        for repo in repos_in_comment:
+            if repo not in repo_mentions:
+                repo_mentions[repo] = {
+                    "mention_count": 0,
+                    "total_points": 0,
+                    "total_comments": 0,
+                    "posts": [],
+                }
+            repo_mentions[repo]["mention_count"] += 1
+            repo_mentions[repo]["total_points"] += points
+
+    return repo_mentions
+
+
+def merge_hn_data(stories: dict, comments: dict) -> dict:
+    """Merge story and comment HN data."""
+    merged = dict(stories)
+    for repo, data in comments.items():
+        if repo in merged:
+            merged[repo]["mention_count"] += data["mention_count"]
+            merged[repo]["total_points"] += data["total_points"]
+        else:
+            merged[repo] = data
+    return merged
+
+
 def fetch_all_hn_metrics(days: int = 7) -> dict:
-    """Fetch HN data and extract GitHub repo mentions."""
+    """Fetch HN data and extract GitHub repo mentions from stories and comments."""
     posts = fetch_ai_related_posts(days=days)
     print(f"Found {len(posts)} AI-related HN posts")
-    return extract_github_repos_from_posts(posts)
+    story_mentions = extract_github_repos_from_posts(posts)
+
+    comments = fetch_ai_related_comments(days=days)
+    print(f"Found {len(comments)} AI-related HN comments")
+    comment_mentions = extract_github_repos_from_comments(comments)
+
+    merged = merge_hn_data(story_mentions, comment_mentions)
+    print(f"Total unique repos from HN: {len(merged)}")
+    return merged
