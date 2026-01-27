@@ -1,0 +1,176 @@
+tools:
+  # Agents & Automation
+  - name: AutoGPT
+    github: Significant-Gravitas/AutoGPT
+    pypi: autogpt
+    category: agents
+    description: "Autonomous AI agent framework"
+
+  - name: CrewAI
+    github: crewAIInc/crewAI
+    pypi: crewai
+    category: agents
+    description: "Multi-agent orchestration framework"
+
+  - name: AutoGen
+    github: microsoft/autogen
+    pypi: autogen
+    category: agents
+    description: "Multi-agent conversation framework"
+
+  - name: LangGraph
+    github: langchain-ai/langgraph
+    pypi: langgraph
+    category: agents
+    description: "Stateful agent orchestration"
+
+  - name: phidata
+    github: phidatahq/phidata
+    pypi: phidata
+    category: agents
+    description: "Build AI assistants with memory and tools"
+
+  # Coding Assistants
+  - name: Aider
+    github: paul-gauthier/aider
+    pypi: aider-chat
+    category: coding
+    description: "AI pair programming in terminal"
+
+  - name: Continue
+    github: continuedev/continue
+    category: coding
+    description: "Open-source AI code assistant"
+
+  # Local Inference
+  - name: Ollama
+    github: ollama/ollama
+    category: local-inference
+    description: "Run LLMs locally"
+
+  - name: LM Studio
+    github: lmstudio-ai/lms
+    category: local-inference
+    description: "Desktop app for local LLMs"
+
+  - name: Open WebUI
+    github: open-webui/open-webui
+    pypi: open-webui
+    category: local-inference
+    description: "Self-hosted ChatGPT-like interface"
+
+  - name: vLLM
+    github: vllm-project/vllm
+    pypi: vllm
+    category: local-inference
+    description: "High-throughput LLM serving engine"
+
+  - name: llama.cpp
+    github: ggerganov/llama.cpp
+    category: local-inference
+    description: "LLM inference in C/C++"
+
+  - name: LocalAI
+    github: mudler/LocalAI
+    category: local-inference
+    description: "Self-hosted OpenAI-compatible API"
+
+  # Frameworks
+  - name: LangChain
+    github: langchain-ai/langchain
+    pypi: langchain
+    category: frameworks
+    description: "LLM application framework"
+
+  - name: LlamaIndex
+    github: run-llama/llama_index
+    pypi: llama-index
+    category: frameworks
+    description: "Data framework for LLM apps"
+
+  - name: Haystack
+    github: deepset-ai/haystack
+    pypi: haystack-ai
+    category: frameworks
+    description: "LLM orchestration framework"
+
+  - name: Semantic Kernel
+    github: microsoft/semantic-kernel
+    pypi: semantic-kernel
+    category: frameworks
+    description: "Microsoft's LLM integration SDK"
+
+  # RAG & Vector
+  - name: Chroma
+    github: chroma-core/chroma
+    pypi: chromadb
+    category: rag
+    description: "AI-native embedding database"
+
+  - name: Qdrant
+    github: qdrant/qdrant
+    pypi: qdrant-client
+    category: rag
+    description: "Vector similarity search engine"
+
+  - name: Weaviate
+    github: weaviate/weaviate
+    pypi: weaviate-client
+    category: rag
+    description: "AI-native vector database"
+
+  - name: Milvus
+    github: milvus-io/milvus
+    pypi: pymilvus
+    category: rag
+    description: "Cloud-native vector database"
+
+  # Eval & Testing
+  - name: promptfoo
+    github: promptfoo/promptfoo
+    category: eval
+    description: "LLM eval and testing"
+
+  - name: DeepEval
+    github: confident-ai/deepeval
+    pypi: deepeval
+    category: eval
+    description: "LLM evaluation framework"
+
+  - name: Ragas
+    github: explodinggradients/ragas
+    pypi: ragas
+    category: eval
+    description: "RAG evaluation framework"
+
+  # Orchestration
+  - name: Dify
+    github: langgenius/dify
+    category: orchestration
+    description: "LLM app development platform"
+
+  - name: Flowise
+    github: FlowiseAI/Flowise
+    category: orchestration
+    description: "Drag & drop LLM flow builder"
+
+  - name: n8n
+    github: n8n-io/n8n
+    category: orchestration
+    description: "Workflow automation platform"
+
+categories:
+  - id: agents
+    name: "Agents & Automation"
+  - id: coding
+    name: "Coding Assistants"
+  - id: local-inference
+    name: "Local Inference"
+  - id: frameworks
+    name: "Frameworks"
+  - id: rag
+    name: "RAG & Vector"
+  - id: eval
+    name: "Eval & Testing"
+  - id: orchestration
+    name: "Orchestration"
