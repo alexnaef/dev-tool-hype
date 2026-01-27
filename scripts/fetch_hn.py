@@ -4,6 +4,7 @@ Extracts GitHub URLs from posts and comments rather than fuzzy matching.
 """
 import re
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from .config import REQUEST_DELAY
 from .fetch_github import parse_github_url
@@ -200,57 +201,71 @@ def merge_hn_data(stories: dict, comments: dict) -> dict:
     return merged
 
 
-def search_hn_by_repo_names(repo_names: list[str], days: int = 30) -> dict:
+def _search_hn_for_alias(alias: str, days: int) -> tuple[str, list[dict]]:
+    """Search HN for a single alias string. Returns (alias, matching_posts)."""
+    posts = search_hn(alias, days=days, hits_per_page=50)
+    alias_lower = alias.lower()
+    matched = []
+    for post in posts:
+        title_lower = post.get("title", "").lower()
+        url_lower = post.get("url", "").lower()
+        if alias_lower in title_lower or alias_lower in url_lower:
+            matched.append(post)
+    return alias, matched
+
+
+def search_hn_by_names(repos_with_aliases: list[tuple[str, list[str]]], days: int = 30) -> dict:
     """
-    Search HN directly for repo names (not just GitHub URLs).
+    Search HN for repo names and aliases (display names, topic tags).
+    repos_with_aliases: list of (full_name, [alias1, alias2, ...])
     Returns {full_name_lower: {mention_count, total_points, ...}}.
     """
+    # Build alias -> full_name mapping, dedup aliases
+    alias_to_repo: dict[str, str] = {}
+    for full_name, aliases in repos_with_aliases:
+        for alias in aliases:
+            a = alias.lower()
+            if len(a) >= 4 and a not in alias_to_repo:
+                alias_to_repo[a] = full_name.lower()
+
+    unique_aliases = list(alias_to_repo.keys())[:80]
+
     repo_mentions: dict[str, dict] = {}
     seen_ids: set[str] = set()
 
-    for full_name in repo_names:
-        # Search by the repo short name (e.g. "clawdbot")
-        name = full_name.split("/")[-1]
-        if len(name) < 3:
-            continue
+    print(f"  Searching HN for {len(unique_aliases)} aliases across {len(repos_with_aliases)} repos...")
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [pool.submit(_search_hn_for_alias, a, days) for a in unique_aliases]
+        all_results = [f.result() for f in futures]
 
-        for query in [name]:
-            posts = search_hn(query, days=days, hits_per_page=50)
-            for post in posts:
-                post_id = post.get("objectID", "")
-                if post_id in seen_ids:
-                    continue
-                seen_ids.add(post_id)
+    for alias, matched_posts in all_results:
+        key = alias_to_repo[alias.lower()]
+        for post in matched_posts:
+            post_id = post.get("objectID", "")
+            if post_id in seen_ids:
+                continue
+            seen_ids.add(post_id)
 
-                title = post.get("title", "")
-                post_url = post.get("url", "")
-                points = post.get("points", 0) or 0
-                comments = post.get("num_comments", 0) or 0
+            points = post.get("points", 0) or 0
+            comments = post.get("num_comments", 0) or 0
+            title = post.get("title", "")
 
-                # Check if the post actually references this repo
-                title_lower = title.lower()
-                url_lower = post_url.lower()
-                name_lower = name.lower()
-                if name_lower not in title_lower and name_lower not in url_lower:
-                    continue
-
-                key = full_name.lower()
-                if key not in repo_mentions:
-                    repo_mentions[key] = {
-                        "mention_count": 0,
-                        "total_points": 0,
-                        "total_comments": 0,
-                        "posts": [],
-                    }
-                repo_mentions[key]["mention_count"] += 1
-                repo_mentions[key]["total_points"] += points
-                repo_mentions[key]["total_comments"] += comments
-                repo_mentions[key]["posts"].append({
-                    "title": title,
-                    "url": f"https://news.ycombinator.com/item?id={post_id}",
-                    "points": points,
-                    "comments": comments,
-                })
+            if key not in repo_mentions:
+                repo_mentions[key] = {
+                    "mention_count": 0,
+                    "total_points": 0,
+                    "total_comments": 0,
+                    "posts": [],
+                }
+            repo_mentions[key]["mention_count"] += 1
+            repo_mentions[key]["total_points"] += points
+            repo_mentions[key]["total_comments"] += comments
+            repo_mentions[key]["posts"].append({
+                "title": title,
+                "url": f"https://news.ycombinator.com/item?id={post_id}",
+                "points": points,
+                "comments": comments,
+            })
 
     for repo in repo_mentions:
         repo_mentions[repo]["posts"].sort(key=lambda x: x["points"], reverse=True)
@@ -259,22 +274,27 @@ def search_hn_by_repo_names(repo_names: list[str], days: int = 30) -> dict:
     return repo_mentions
 
 
-def fetch_all_hn_metrics(days: int = 7, repo_names: list[str] | None = None) -> dict:
+def fetch_all_hn_metrics(
+    days: int = 7,
+    repos_with_aliases: list[tuple[str, list[str]]] | None = None,
+) -> dict:
     """Fetch HN data and extract GitHub repo mentions from stories, comments, and name search."""
-    posts = fetch_ai_related_posts(days=days)
-    print(f"Found {len(posts)} AI-related HN posts")
-    story_mentions = extract_github_repos_from_posts(posts)
+    # Run story and comment fetches in parallel
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        posts_future = pool.submit(fetch_ai_related_posts, days)
+        comments_future = pool.submit(fetch_ai_related_comments, days)
+        posts = posts_future.result()
+        comments = comments_future.result()
 
-    comments = fetch_ai_related_comments(days=days)
-    print(f"Found {len(comments)} AI-related HN comments")
+    print(f"Found {len(posts)} AI-related HN posts, {len(comments)} comments")
+    story_mentions = extract_github_repos_from_posts(posts)
     comment_mentions = extract_github_repos_from_comments(comments)
 
     merged = merge_hn_data(story_mentions, comment_mentions)
 
-    # Also search by repo name for repos we already know about
-    if repo_names:
-        print(f"Searching HN by name for {len(repo_names)} repos...")
-        name_mentions = search_hn_by_repo_names(repo_names, days=30)
+    # Also search by repo name + aliases (display name, topics)
+    if repos_with_aliases:
+        name_mentions = search_hn_by_names(repos_with_aliases, days=30)
         merged = merge_hn_data(merged, name_mentions)
 
     print(f"Total unique repos from HN: {len(merged)}")

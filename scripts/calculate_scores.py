@@ -1,11 +1,20 @@
 """
-Calculate hype and adoption scores for tools.
+Calculate hotness scores for tools.
 
-Hype Score = stars (25%) + stars_this_week (15%) + HN points (10%) + HN mentions (5%)
-             + Reddit points (15%) + Reddit mentions (10%) + commits (20%)
-Adoption Score = install downloads (60%) + commit activity (40%)
+Single unified score. Downloads excluded — too unreliable
+(brew formula names don't match repos, npm not tracked, etc).
 
-Repos with < 1000 stars get a harsh penalty multiplier.
+Weights:
+  stars        30%   (strongest signal of real traction)
+  stars/week   10%   (trending page velocity)
+  HN points    15%   (quality discussion signal)
+  HN mentions  10%   (breadth of discussion)
+  Reddit pts   10%   (community buzz)
+  Reddit cnt   5%    (breadth)
+  commits      20%   (active development)
+
+Repos with < 1000 stars get a penalty multiplier (stars/1000).
+Corporate repos get a 0.7 multiplier.
 Log-scale normalization avoids outlier crushing.
 """
 import math
@@ -28,7 +37,7 @@ def calculate_scores(
     previous_github_data: dict | None = None,
 ) -> list[dict]:
     """
-    Calculate hype and adoption scores for discovered tools.
+    Calculate a single hotness score for discovered tools.
     Each tool dict should already have github/pypi/hn/reddit fields merged in.
     """
     results = []
@@ -39,7 +48,6 @@ def calculate_scores(
         full_name = tool.get("full_name", "")
         stars_current = tool.get("stars", 0)
 
-        # Compute star velocity (stars per day based on repo age)
         created = tool.get("created_at")
         if created:
             try:
@@ -75,6 +83,7 @@ def calculate_scores(
             "reddit_mentions": tool.get("reddit_mentions", 0),
             "reddit_points": tool.get("reddit_points", 0),
             "stars_this_week": tool.get("stars_period", 0),
+            "pushed_at": tool.get("pushed_at", ""),
             "corporate": tool.get("corporate", False),
         }
         results.append(result)
@@ -89,34 +98,30 @@ def calculate_scores(
     norm_hn_cnt = normalize_log([r["hn_mentions"] for r in results])
     norm_reddit_pts = normalize_log([r["reddit_points"] for r in results])
     norm_reddit_cnt = normalize_log([r["reddit_mentions"] for r in results])
-    norm_downloads = normalize_log([r["downloads_week"] for r in results])
     norm_commits = normalize_log([r["commits_30d"] for r in results])
 
     for i, r in enumerate(results):
-        hype = (
-            norm_stars[i] * 0.25
-            + norm_stars_week[i] * 0.15
-            + norm_hn_pts[i] * 0.10
-            + norm_hn_cnt[i] * 0.05
-            + norm_reddit_pts[i] * 0.15
-            + norm_reddit_cnt[i] * 0.10
+        score = (
+            norm_stars[i] * 0.30
+            + norm_stars_week[i] * 0.10
+            + norm_hn_pts[i] * 0.15
+            + norm_hn_cnt[i] * 0.10
+            + norm_reddit_pts[i] * 0.10
+            + norm_reddit_cnt[i] * 0.05
             + norm_commits[i] * 0.20
         )
-        adoption = norm_downloads[i] * 0.6 + norm_commits[i] * 0.4
 
         # Heavy penalty for repos with < 1000 stars
         if r["stars"] < 1000:
-            star_penalty = r["stars"] / 1000
-            hype *= star_penalty
-            adoption *= star_penalty
+            score *= r["stars"] / 1000
 
         # Corporate penalty
         if r["corporate"]:
-            hype *= 0.7
+            score *= 0.7
 
-        r["hype_score"] = round(hype, 1)
-        r["adoption_score"] = round(adoption, 1)
-        r["combined_score"] = round((hype + adoption) / 2, 1)
+        r["hype_score"] = round(score, 1)
+        r["adoption_score"] = round(score, 1)
+        r["combined_score"] = round(score, 1)
 
         if r["stars_this_week"] > 100:
             r["trend"] = "rising"
@@ -126,7 +131,7 @@ def calculate_scores(
             r["trend"] = "stable"
 
     results.sort(key=lambda x: x["combined_score"], reverse=True)
-    return results[:50]
+    return results
 
 
 def identify_movers(current: list[dict], previous: list[dict] | None) -> dict:

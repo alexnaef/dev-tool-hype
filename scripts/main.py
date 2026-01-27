@@ -3,10 +3,11 @@ Main orchestration script.
 Flow: discover -> trending -> seeds -> HN/Reddit (cross-source) -> enrich -> filter emerging -> corporate -> pypi -> score -> write
 """
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from .config import DATA_DIR, SNAPSHOTS_DIR, FRONTEND_DATA_FILE, load_tools
-from .fetch_github import discover_trending_repos, enrich_repos, scrape_github_trending, is_corporate_org
+from .fetch_github import discover_trending_repos, enrich_repos, scrape_github_trending, check_corporate_bulk
 from .fetch_pypi import fetch_pypi_for_repos
 from .fetch_hn import fetch_all_hn_metrics
 from .fetch_reddit import fetch_all_reddit_metrics
@@ -70,13 +71,38 @@ def main():
 
     print(f"\nTotal unique repos after initial merge: {len(repos)}")
 
-    # --- Step 4: Fetch HN + cross-source discovery ---
-    print("\nFetching Hacker News mentions...")
-    repo_names_for_hn = list(repos.keys())
-    hn_data = fetch_all_hn_metrics(days=7, repo_names=repo_names_for_hn)
+    # --- Step 4 & 5: Fetch HN + Reddit in parallel ---
+    print("\nFetching Hacker News + Reddit mentions in parallel...")
+
+    # Build aliases for HN search: repo name, display name, topic tags
+    repos_with_aliases = []
+    for key, data in repos.items():
+        aliases = set()
+        # Repo short name (e.g. "moltbot")
+        repo_name = key.split("/")[-1]
+        aliases.add(repo_name)
+        # Display name if different (e.g. "clawdbot")
+        display = data.get("display_name", "")
+        if display:
+            aliases.add(display)
+        name = data.get("name", "")
+        if name and name.lower() != repo_name:
+            aliases.add(name)
+        # Topic tags that look like product names (not generic like "ai" or "python")
+        for topic in data.get("topics", []):
+            if len(topic) >= 4 and topic not in ("python", "javascript", "typescript", "rust",
+                "golang", "machine-learning", "deep-learning", "artificial-intelligence",
+                "open-source", "linux", "macos", "windows", "docker", "kubernetes"):
+                aliases.add(topic)
+        repos_with_aliases.append((key, list(aliases)))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        hn_future = pool.submit(fetch_all_hn_metrics, days=7, repos_with_aliases=repos_with_aliases)
+        reddit_future = pool.submit(fetch_all_reddit_metrics)
+        hn_data = hn_future.result()
+        reddit_data = reddit_future.result()
 
     for full_name_lower, hn_info in hn_data.items():
-        # Cross-source: add newly discovered repos
         if full_name_lower not in repos:
             parts = full_name_lower.split("/", 1)
             repos[full_name_lower] = {
@@ -86,10 +112,6 @@ def main():
         repos[full_name_lower]["hn_mentions"] = hn_info["mention_count"]
         repos[full_name_lower]["hn_points"] = hn_info["total_points"]
         repos[full_name_lower]["hn_top_posts"] = hn_info.get("posts", [])[:3]
-
-    # --- Step 5: Fetch Reddit + cross-source discovery ---
-    print("\nFetching Reddit mentions...")
-    reddit_data = fetch_all_reddit_metrics()
 
     for full_name_lower, reddit_info in reddit_data.items():
         if full_name_lower not in repos:
@@ -106,6 +128,28 @@ def main():
     # --- Step 6: Enrich all repos with GitHub stats ---
     print("\nEnriching repos with GitHub stats...")
     repos = enrich_repos(repos)
+
+    # --- Step 6b: Deduplicate by enriched full_name (handles redirects/renames) ---
+    deduped = {}
+    for key, data in repos.items():
+        canonical = data.get("full_name", key).lower()
+        if canonical in deduped:
+            # Merge: keep whichever has more data, combine HN/Reddit mentions
+            existing = deduped[canonical]
+            existing["hn_mentions"] = existing.get("hn_mentions", 0) + data.get("hn_mentions", 0)
+            existing["hn_points"] = existing.get("hn_points", 0) + data.get("hn_points", 0)
+            existing["reddit_mentions"] = existing.get("reddit_mentions", 0) + data.get("reddit_mentions", 0)
+            existing["reddit_points"] = existing.get("reddit_points", 0) + data.get("reddit_points", 0)
+            hn_posts = existing.get("hn_top_posts", []) + data.get("hn_top_posts", [])
+            hn_posts.sort(key=lambda x: x.get("points", 0), reverse=True)
+            existing["hn_top_posts"] = hn_posts[:5]
+            if data.get("display_name") and not existing.get("display_name"):
+                existing["display_name"] = data["display_name"]
+        else:
+            deduped[canonical] = data
+    if len(deduped) < len(repos):
+        print(f"Deduplicated repos: {len(repos)} -> {len(deduped)}")
+    repos = deduped
 
     # --- Step 7: Filter to emerging only (created < 6 months) ---
     cutoff = datetime.utcnow() - timedelta(days=180)
@@ -124,11 +168,9 @@ def main():
     repos = filtered_repos
     print(f"Filtered to emerging repos: {before} -> {len(repos)}")
 
-    # --- Step 8: Corporate check ---
+    # --- Step 8: Corporate check (bulk, deduplicated by owner) ---
     print("\nChecking for corporate repos...")
-    for full_name, data in repos.items():
-        owner = full_name.split("/")[0]
-        data["corporate"] = is_corporate_org(owner)
+    check_corporate_bulk(repos)
     corporate_count = sum(1 for r in repos.values() if r.get("corporate"))
     print(f"Flagged {corporate_count} corporate repos")
 
@@ -145,7 +187,9 @@ def main():
 
     print("\nCalculating scores...")
     tools_list = list(repos.values())
-    rankings = calculate_scores(tools_list, previous_github_data=previous_github)
+    all_rankings = calculate_scores(tools_list, previous_github_data=previous_github)
+    rankings = all_rankings[:50]
+    print(f"Top 50 selected from {len(all_rankings)} scored repos")
     movers = identify_movers(rankings, previous_rankings)
 
     # --- Step 11: Write output ---

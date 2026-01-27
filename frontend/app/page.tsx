@@ -9,7 +9,7 @@ interface ToolData {
   stars: number;
   hn_mentions: number;
   downloads_month: number;
-  pushed_at?: string;
+  pushed_at: string;
   description?: string;
 }
 
@@ -43,8 +43,8 @@ export default async function Home() {
     stats: {
       githubStars: formatNumber(t.stars),
       hnMentions: t.hn_mentions,
-      pypiDownloads: t.downloads_month ? `${formatNumber(t.downloads_month)}/mo` : "N/A",
-      lastUpdated: data.updated_at ? new Date(data.updated_at).toLocaleDateString() : "N/A",
+      pypiDownloads: t.downloads_month > 0 ? `${formatNumber(t.downloads_month)}/mo` : "N/A",
+      lastUpdated: t.pushed_at ? new Date(t.pushed_at).toLocaleDateString() : "N/A",
     },
   }));
 

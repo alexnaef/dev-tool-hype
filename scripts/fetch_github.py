@@ -4,9 +4,15 @@ Fetch GitHub metrics: discover trending repos + enrich with stats
 import re
 import requests
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from .config import GITHUB_TOKEN, REQUEST_DELAY
+
+# With a token we get 5000 req/hr — no need for 1s delays between calls.
+# Without a token, 60 req/hr so we must be conservative.
+_API_DELAY = 0.1 if GITHUB_TOKEN else REQUEST_DELAY
+_MAX_WORKERS = 10 if GITHUB_TOKEN else 2
 
 GITHUB_API = "https://api.github.com"
 
@@ -117,32 +123,46 @@ def discover_trending_repos(max_results: int = 100) -> list[dict]:
         except requests.RequestException as e:
             print(f"Error in GitHub search '{q[:40]}...': {e}")
 
-        time.sleep(REQUEST_DELAY * 2)
+        time.sleep(_API_DELAY)
 
     results.sort(key=lambda x: x["stars"], reverse=True)
     return results[:max_results]
 
 
+def _enrich_single(full_name: str, existing: dict) -> tuple[str, dict]:
+    """Enrich a single repo (for use in thread pool)."""
+    owner, repo = full_name.split("/", 1)
+    if "watchers" not in existing:
+        stats = fetch_repo_stats(owner, repo)
+        if stats:
+            existing.update(stats)
+        time.sleep(_API_DELAY)
+
+    if "commits_30d" not in existing:
+        existing["commits_30d"] = fetch_commit_activity(owner, repo, 30)
+        time.sleep(_API_DELAY)
+
+    return full_name, existing
+
+
 def enrich_repos(repos: dict[str, dict]) -> dict[str, dict]:
     """
     For each repo keyed by full_name (owner/repo), fetch full stats
-    and commit activity if not already present.
+    and commit activity if not already present. Uses thread pool for concurrency.
     """
-    enriched = {}
-    for full_name, existing in repos.items():
-        owner, repo = full_name.split("/", 1)
-        if "watchers" not in existing:
-            print(f"Enriching {full_name}")
-            stats = fetch_repo_stats(owner, repo)
-            if stats:
-                existing.update(stats)
-            time.sleep(REQUEST_DELAY)
+    needs_enrichment = {k: v for k, v in repos.items() if "watchers" not in v or "commits_30d" not in v}
+    already_done = {k: v for k, v in repos.items() if k not in needs_enrichment}
 
-        if "commits_30d" not in existing:
-            existing["commits_30d"] = fetch_commit_activity(owner, repo, 30)
-            time.sleep(REQUEST_DELAY)
+    print(f"Enriching {len(needs_enrichment)} repos ({len(already_done)} already cached)...")
+    enriched = dict(already_done)
 
-        enriched[full_name] = existing
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+        futures = {pool.submit(_enrich_single, k, v): k for k, v in needs_enrichment.items()}
+        for i, future in enumerate(as_completed(futures), 1):
+            full_name, data = future.result()
+            enriched[full_name] = data
+            if i % 20 == 0:
+                print(f"  Enriched {i}/{len(needs_enrichment)}")
 
     return enriched
 
@@ -239,6 +259,26 @@ def is_corporate_org(owner: str) -> bool:
         return data.get("public_repos", 0) > 30
     except requests.RequestException:
         return False
+
+
+def check_corporate_bulk(repos: dict[str, dict]) -> None:
+    """Check corporate status for all repos, deduplicating by owner, using thread pool."""
+    owners = list({k.split("/")[0] for k in repos})
+    print(f"Checking {len(owners)} unique owners for corporate status...")
+
+    owner_results: dict[str, bool] = {}
+
+    def _check(owner: str) -> tuple[str, bool]:
+        time.sleep(_API_DELAY)
+        return owner, is_corporate_org(owner)
+
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+        for owner, result in pool.map(lambda o: _check(o), owners):
+            owner_results[owner] = result
+
+    for full_name, data in repos.items():
+        owner = full_name.split("/")[0]
+        data["corporate"] = owner_results.get(owner, False)
 
 
 def parse_github_url(url: str) -> str | None:

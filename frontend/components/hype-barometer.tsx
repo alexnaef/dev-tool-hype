@@ -167,7 +167,7 @@ export function HypeBarometer({ name, score, url, stats }: HypeBarometerProps) {
               <p className="font-medium">{stats.hnMentions}</p>
             </div>
             <div>
-              <p className="text-muted-foreground">PyPI Downloads</p>
+              <p className="text-muted-foreground">Downloads</p>
               <p className="font-medium">{stats.pypiDownloads}</p>
             </div>
             <div>
