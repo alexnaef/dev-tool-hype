@@ -37,12 +37,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Pull latest before committing to avoid conflicts
+          git pull --rebase
+
           git add frontend/public/data.json data/
 
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             git commit -m "Update data $(date +%Y-%m-%d)"
-            git pull --rebase
             git push
           fi
