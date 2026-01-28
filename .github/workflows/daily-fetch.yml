@@ -32,8 +32,9 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run data fetcher
-        run: python -m scripts.main
+        run: python -u -m scripts.main
         env:
+          PYTHONUNBUFFERED: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Commit and push changes
